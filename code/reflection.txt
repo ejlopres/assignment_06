@@ -1,7 +1,34 @@
-Write your reflection here.
+Reflection — Assignment 06: What Are People Saying?
 
-See reflection.md for what makes a good reflection — be specific, use the
-terminology from this assignment (REST API, endpoint, HTTP status code,
-raise_for_status, API key, form data vs. JSON body, rate limit, caching,
-json_normalize, record_path, meta, grain, opinion mining, named-entity
-recognition, prompt, system prompt, reasoning model), and make it actionable.
+What I built. A pipeline that takes customer reviews, calls four portal endpoints (Azure opinion mining, Azure entity recognition, 
+the decision model, and the language model), caches the answers, flattens the JSON into tables, and feeds a Streamlit page with filters, 
+metrics, and a question box.
+
+Extract versus transform. The most useful design idea was keeping the steps that call the network (apicalls.py and the *_step functions) 
+separate from the steps that only reshape data (the *_table functions and build_mentions). Because the transform steps never touch the 
+network, I could run them against the recorded fixtures dozens of times while getting opinions_table right, without spending any of the 
+150 daily requests. Caching made the same point from the other side: after the first run, the whole pipeline is instant and works 
+offline. raise_for_status() sits in each API function so that a bad key (401) or a typo in a path (404) fails on the line that caused 
+it, instead of surfacing later as a confusing KeyError.
+
+Why two AI services. Opinion mining alone misses "Otto always says hi" because there are no opinion words to attach to, and entity 
+recognition alone cannot tell that the seating is positive inside a negative sentence ("I love the seating, but the music is too loud"). 
+Combining them lets each cover the other's blind spot, and entity_mentions avoids double counting when both find the same thing. The 
+decision model then classifies each mention into subjects I defined, and its confidence score is a reminder that it can be wrong; I kept 
+it in the table instead of throwing it away.
+
+Nested JSON. sentences_table and entities_table were a good fit for pd.json_normalize with record_path, meta and record_prefix. 
+opinions_table was not: a target points at its assessments by a reference string, so I used nested loops and int(ref.split("/")[-1]) 
+to find the right assessment. That taught me json_normalize is a convenience for regular shapes, not a replacement for understanding 
+the data.
+
+Pandas counts, the model writes. summarize_items uses a pivot table plus an engineered net column (positive minus negative), and 
+build_messages gives the language model those counts plus a limited set of example sentences. I did this because language models are 
+unreliable at counting but good at writing, and only a few sentences fit in a prompt, so a question like "What is the most popular 
+product?" has to be answered from the full table. The page also refuses to call the model when no review matches, which saves a request 
+and prevents a made-up answer.
+
+What was hard and what I would change. Getting the merges in build_mentions right (and removing "other" subjects and duplicate items 
+in one sentence) took the most care, and a pivot table drops a sentiment column that never occurs, which I handled with table.get(..., 0) 
+and an early return for an empty table. With more time I would add tests for low-confidence subject labels and let the owner filter by 
+date. I would also keep the API key in .env only, as done here, so it never lands in a commit.

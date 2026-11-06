@@ -38,19 +38,22 @@ def sentiment_step(reviews: pd.DataFrame, cache_file: str) -> list:
     (`response["results"]["documents"][0]`) with one extra key, `review_id`,
     copied from the review's row — so every document says which review it is.
 
-    Steps: if `cache_file` exists, `json.load` it and return it — no API calls.
-    Otherwise start an empty list; for each review (loop over
-    `reviews.to_dict("records")` to get one dict per row) call `get_sentiment` on
-    its `text`, take the document out of the response, set
-    `document["review_id"]`, and append it. Then `json.dump` the list to
-    `cache_file` and return it.
-
-    Delete the cache file to force fresh calls. The portal caches too, so a
-    re-run on the same reviews is free either way — but your cache also works
-    offline, and it is what makes the transform steps below fast to debug.
+    If `cache_file` exists it is loaded and returned with no API calls. Otherwise
+    each review's `text` goes to `get_sentiment`, and the list is saved to
+    `cache_file` before it is returned.
     """
-    # TODO: your code here
-    pass
+    if os.path.exists(cache_file):
+        with open(cache_file) as fh:
+            return json.load(fh)
+    documents = []
+    for review in reviews.to_dict("records"):
+        response = get_sentiment(review["text"])
+        document = response["results"]["documents"][0]
+        document["review_id"] = review["review_id"]
+        documents.append(document)
+    with open(cache_file, "w") as fh:
+        json.dump(documents, fh)
+    return documents
 
 
 def entities_step(reviews: pd.DataFrame, cache_file: str) -> list:
@@ -59,26 +62,42 @@ def entities_step(reviews: pd.DataFrame, cache_file: str) -> list:
     One dict per review: the Azure entity-recognition document with `review_id`
     added. Same cache rule, same loop, `get_entities` instead of `get_sentiment`.
     """
-    # TODO: your code here
-    pass
+    if os.path.exists(cache_file):
+        with open(cache_file) as fh:
+            return json.load(fh)
+    documents = []
+    for review in reviews.to_dict("records"):
+        response = get_entities(review["text"])
+        document = response["results"]["documents"][0]
+        document["review_id"] = review["review_id"]
+        documents.append(document)
+    with open(cache_file, "w") as fh:
+        json.dump(documents, fh)
+    return documents
+
+
+SENTENCE_COLUMNS = ["review_id", "sentence_id", "sentence_text",
+                    "sentence_sentiment", "sentence_offset", "sentence_length"]
+OPINION_COLUMNS = ["review_id", "sentence_id", "mention", "mention_sentiment",
+                   "assessments", "mention_offset", "source"]
+ENTITY_COLUMNS = ["review_id", "entity_text", "entity_category", "entity_offset"]
 
 
 def sentences_table(documents: list) -> pd.DataFrame:
     """One row per sentence: the sentiment documents flattened with `json_normalize`.
 
     Columns, in this order: `review_id`, `sentence_id`, `sentence_text`,
-    `sentence_sentiment`, `sentence_offset`, `sentence_length`.
-
-    Steps: `pd.json_normalize(documents, record_path="sentences",
-    meta=["review_id"], record_prefix="sentence_")` gives one row per sentence
-    with every field prefixed — `sentence_text`, `sentence_sentiment`, ... — and
-    the parent's `review_id` copied onto each (lesson 4-1). `sentence_id` is the
-    sentence's position in its review, 0, 1, 2, ...: a group-by on `review_id`
-    and `.cumcount()`. Keep only the six columns above. Strip the trailing space
-    Azure leaves on `sentence_text` with `.str.strip()`.
+    `sentence_sentiment`, `sentence_offset`, `sentence_length`. `sentence_id` is
+    the sentence's position in its review (0, 1, 2, ...) and the trailing space
+    Azure leaves on `sentence_text` is stripped.
     """
-    # TODO: your code here
-    pass
+    table = pd.json_normalize(documents, record_path="sentences",
+                              meta=["review_id"], record_prefix="sentence_")
+    if table.empty:
+        return pd.DataFrame(columns=SENTENCE_COLUMNS)
+    table["sentence_id"] = table.groupby("review_id").cumcount()
+    table["sentence_text"] = table["sentence_text"].str.strip()
+    return table[SENTENCE_COLUMNS].reset_index(drop=True)
 
 
 def opinions_table(documents: list) -> pd.DataFrame:
@@ -87,26 +106,31 @@ def opinions_table(documents: list) -> pd.DataFrame:
     Columns, in this order: `review_id`, `sentence_id`, `mention`,
     `mention_sentiment`, `assessments`, `mention_offset`, `source`.
 
-    Each sentence in a sentiment document has `targets` and `assessments`. A
-    target ("mocha latte") points at its assessments ("overpriced", "lukewarm")
-    through its `relations` list — each relation has a `relationType` and a
-    `ref` like `"#/documents/0/sentences/1/assessments/0"`. The number after
-    `assessments/` is the assessment's position in that sentence's
-    `assessments` list.
-
-    This one is three levels deep with cross-references, which is past what
-    `json_normalize` does in one call — so build it with nested loops (lesson
-    4-1, "parsing the JSON response"). For each document, for each sentence
-    (`enumerate` gives you `sentence_id`), for each target: collect the text of
-    every assessment its relations point to (only relations whose
-    `relationType` is `"assessment"`), join them with `", "`, and append a row
-    dict. `mention` is the target's `text`, `mention_sentiment` its `sentiment`,
-    `mention_offset` its `offset`, and `source` is always `"opinion"`. Return
-    `pd.DataFrame(rows, columns=[...the seven names...])`, so a set of reviews
-    with no targets still gives a table with the right columns.
+    A target points at its assessments through its `relations`; the number after
+    `assessments/` in each `ref` is the assessment's position in the same
+    sentence's `assessments` list. Only `"assessment"` relations count, and the
+    texts are joined with `", "`. `source` is always `"opinion"`.
     """
-    # TODO: your code here
-    pass
+    rows = []
+    for document in documents:
+        for sentence_id, sentence in enumerate(document["sentences"]):
+            assessments = sentence.get("assessments", [])
+            for target in sentence.get("targets", []):
+                words = []
+                for relation in target.get("relations", []):
+                    if relation["relationType"] == "assessment":
+                        position = int(relation["ref"].split("/")[-1])
+                        words.append(assessments[position]["text"])
+                rows.append({
+                    "review_id": document["review_id"],
+                    "sentence_id": sentence_id,
+                    "mention": target["text"],
+                    "mention_sentiment": target["sentiment"],
+                    "assessments": ", ".join(words),
+                    "mention_offset": target["offset"],
+                    "source": "opinion",
+                })
+    return pd.DataFrame(rows, columns=OPINION_COLUMNS)
 
 
 def entities_table(documents: list) -> pd.DataFrame:
@@ -115,14 +139,13 @@ def entities_table(documents: list) -> pd.DataFrame:
     Columns, in this order: `review_id`, `entity_text`, `entity_category`,
     `entity_offset`. Only the categories in `MENTION_CATEGORIES` ("Person",
     "Product"); a plain 0, 1, 2, ... index.
-
-    Steps: `json_normalize` again — `record_path="entities"`,
-    `meta=["review_id"]`, `record_prefix="entity_"` — then a boolean index with
-    `.isin(MENTION_CATEGORIES)` on `entity_category`. A document with no
-    entities contributes no rows, which `json_normalize` handles for you.
     """
-    # TODO: your code here
-    pass
+    table = pd.json_normalize(documents, record_path="entities",
+                              meta=["review_id"], record_prefix="entity_")
+    if table.empty:
+        return pd.DataFrame(columns=ENTITY_COLUMNS)
+    table = table[table["entity_category"].isin(MENTION_CATEGORIES)]
+    return table[ENTITY_COLUMNS].reset_index(drop=True)
 
 
 def subjects_step(reviews: pd.DataFrame, mentions: pd.DataFrame,
@@ -132,17 +155,29 @@ def subjects_step(reviews: pd.DataFrame, mentions: pd.DataFrame,
     Returns one row per (review, mention) with columns `review_id`, `mention`,
     `subject`, `subject_confidence`.
 
-    Steps: if `cache_file` exists, `pd.read_csv` it and return it. Otherwise, for
-    each review that has mentions: take its mentions in order of
-    `mention_offset`, without repeats (`.drop_duplicates()` keeps the first),
-    and call `classify_mentions(review_text, that_list)`. The answers come back
-    keyed by mention: `response["answers"][mention]["choice"]` and
-    `["confidence"]`. Append one row dict per mention. Build the DataFrame,
-    `to_csv(cache_file, index=False)`, and return it.
-
-    Always send the mentions in offset order: the portal only answers from its
-    cache when the request is exactly the same, so the same reviews must
-    produce the same list every time.
+    Each review's mentions are sent to `classify_mentions` in `mention_offset`
+    order, without repeats, so the same reviews always produce the same request
+    (the portal only answers from its cache when a request is identical).
     """
-    # TODO: your code here
-    pass
+    if os.path.exists(cache_file):
+        return pd.read_csv(cache_file)
+    rows = []
+    for review in reviews.to_dict("records"):
+        own = mentions[mentions["review_id"] == review["review_id"]]
+        if own.empty:
+            continue
+        names = (own.sort_values("mention_offset", kind="stable")["mention"]
+                 .drop_duplicates().tolist())
+        response = classify_mentions(review["text"], names)
+        for name in names:
+            answer = response["answers"][name]
+            rows.append({
+                "review_id": review["review_id"],
+                "mention": name,
+                "subject": answer["choice"],
+                "subject_confidence": answer["confidence"],
+            })
+    subjects = pd.DataFrame(rows, columns=["review_id", "mention", "subject",
+                                           "subject_confidence"])
+    subjects.to_csv(cache_file, index=False)
+    return subjects

@@ -38,18 +38,12 @@ def get_sentiment(text: str) -> dict:
     `sentiment`, and `sentences` — each with its own `sentiment`, `text`, `offset`
     and `length`, plus `targets` (the things the writer has an opinion about) and
     `assessments` (the opinion words).
-
-    How to build it:
-
-    - `url = f"{BASE_URL}/api/azure/sentiment"`
-    - `headers = {"X-API-KEY": get_api_key()}` — the key comes from your `.env`
-      file, never from a string in this file.
-    - `response = requests.post(url, headers=headers, data={"text": text})` —
-      `data=` sends a form, which is what this endpoint expects (lesson 4-2).
-    - `response.raise_for_status()`, then `return response.json()`.
     """
-    # TODO: your code here
-    pass
+    url = f"{BASE_URL}/api/azure/sentiment"
+    headers = {"X-API-KEY": get_api_key()}
+    response = requests.post(url, headers=headers, data={"text": text})
+    response.raise_for_status()
+    return response.json()
 
 
 def get_entities(text: str) -> dict:
@@ -59,14 +53,12 @@ def get_entities(text: str) -> dict:
     entities are a list at `["results"]["documents"][0]["entities"]`, each with
     `text`, `category` ("Person", "Product", "Location", ...), `offset` and
     `confidenceScore`.
-
-    How to build it:
-
-    - Exactly `get_sentiment` with a different path. Write it again rather than
-      copy-paste-and-forget: the path is the only line that changes.
     """
-    # TODO: your code here
-    pass
+    url = f"{BASE_URL}/api/azure/entityrecognition"
+    headers = {"X-API-KEY": get_api_key()}
+    response = requests.post(url, headers=headers, data={"text": text})
+    response.raise_for_status()
+    return response.json()
 
 
 def classify_mentions(review_text: str, mentions: list) -> dict:
@@ -83,20 +75,16 @@ def classify_mentions(review_text: str, mentions: list) -> dict:
         response["answers"]["mocha latte"]["choice"]       ->  "product"
         response["answers"]["mocha latte"]["confidence"]   ->  0.99
 
-    How to build it:
-
-    - Same URL-and-headers start as the others, with path `/api/ollama/systemone`.
-    - Build the body as a Python dict, exactly as above.
-    - This endpoint takes **JSON**, not a form: `requests.post(url,
-      headers=headers, json=body)`. `json=` turns the dict into JSON and sets
-      the Content-Type for you. (`data=` would send a form and get a 4xx back —
-      which `raise_for_status()` would tell you about immediately.)
-    - The decision model is slow the first time a question is asked (seconds per
-      mention) and instant after that, because the portal caches every answer.
-    - `raise_for_status()`, `return response.json()`.
+    This endpoint takes JSON, not a form. The decision model is slow the first
+    time a question is asked and instant after that, because the portal caches.
     """
-    # TODO: your code here
-    pass
+    url = f"{BASE_URL}/api/ollama/systemone"
+    headers = {"X-API-KEY": get_api_key()}
+    body = {"state": {"review": review_text},
+            "questions": subject_questions(mentions)}
+    response = requests.post(url, headers=headers, json=body)
+    response.raise_for_status()
+    return response.json()
 
 
 def ask_llm(messages: list) -> str:
@@ -113,13 +101,10 @@ def ask_llm(messages: list) -> str:
 
     The reply text is at `response.json()["choices"][0]["message"]["content"]`
     (lesson 4-3). Return just that string.
-
-    How to build it:
-
-    - URL and headers as before, path `/api/azure/foundry/chat/completions`.
-    - `params = {"model": LLM_MODEL, "reasoning_effort": LLM_REASONING_EFFORT}`
-    - `requests.post(url, headers=headers, json=messages, params=params)`
-    - `raise_for_status()`, then dig the content out of the JSON and return it.
     """
-    # TODO: your code here
-    pass
+    url = f"{BASE_URL}/api/azure/foundry/chat/completions"
+    headers = {"X-API-KEY": get_api_key()}
+    params = {"model": LLM_MODEL, "reasoning_effort": LLM_REASONING_EFFORT}
+    response = requests.post(url, headers=headers, json=messages, params=params)
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
