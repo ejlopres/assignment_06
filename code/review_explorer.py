@@ -59,19 +59,22 @@ if subject != "All":
     selected = selected[selected["subject"] == subject]
 
 # 5. Four metrics, side by side
+sentiment = selected["mention_sentiment"]
 reviews_col, mentions_col, positive_col, negative_col = st.columns(4)
 reviews_col.metric("Reviews", int(selected["review_id"].nunique()))
 mentions_col.metric("Mentions", len(selected))
-positive_col.metric("Positive", int((selected["mention_sentiment"] == "positive").sum()))
-negative_col.metric("Negative", int((selected["mention_sentiment"] == "negative").sum()))
+positive_col.metric("Positive", int((sentiment == "positive").sum()))
+negative_col.metric("Negative", int((sentiment == "negative").sum()))
 
 # 6. Three tables in three tabs
 summary = summarize_items(selected)
 praised_tab, complained_tab, said_tab = st.tabs(
     ["Most praised", "Most complained about", "What people said"])
-praised = summary[summary["net"] > 0].sort_values("net", ascending=False, kind="stable")
+praised = summary[summary["net"] > 0].sort_values(
+    "net", ascending=False, kind="stable")
 praised_tab.dataframe(praised.head(5), hide_index=True)
-complained = summary[summary["net"] < 0].sort_values("net", ascending=True, kind="stable")
+complained = summary[summary["net"] < 0].sort_values(
+    "net", ascending=True, kind="stable")
 complained_tab.dataframe(complained.head(5), hide_index=True)
 said_tab.dataframe(
     selected[["date", "location", "item", "subject", "mention_sentiment",
@@ -97,7 +100,9 @@ if asked and question.strip():
         with st.spinner("Asking the model..."):
             answer = ask_llm(messages)
         st.markdown(answer)
-        st.caption(f"Based on {len(evidence)} mentions — {describe_scope(scope)}:")
+        st.caption(
+            f"Based on {len(evidence)} mentions — {describe_scope(scope)}:")
         st.dataframe(
-            evidence[["date", "location", "item", "mention_sentiment", "sentence_text"]],
+            evidence[["date", "location", "item", "mention_sentiment",
+                      "sentence_text"]],
             hide_index=True)
